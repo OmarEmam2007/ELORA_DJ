@@ -37,7 +37,23 @@ module.exports = {
             }
         }
 
+        if (!chosenBot && client?.music) {
+            chosenBot = client;
+        }
+
         if (!chosenBot || !chosenBot.music) {
+            try {
+                const dump = (client.clones || [client]).map(b => {
+                    const g = b.guilds.cache.get(guildId);
+                    return {
+                        bot: b.user?.username,
+                        inGuild: Boolean(g),
+                        voiceChannelId: g?.members?.me?.voice?.channelId || null,
+                        hasMusic: Boolean(b.music),
+                    };
+                });
+                console.log('[DJ_DEBUG] No available music bot (247). Bots dump:', { guildId, requestedVoiceChannelId: voiceChannel.id, dump });
+            } catch (_) { }
             return interaction.editReply('❌ No available music bot right now.');
         }
 

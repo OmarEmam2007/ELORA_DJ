@@ -389,6 +389,7 @@ class MusicService {
         await this._ensureConnection(guildId, voiceChannelId);
         const res = await this._resolveQuery(query);
         console.log(`[MUSIC] resolveQuery input="${String(query).slice(0, 200)}" -> url="${res?.url}" title="${res?.title}"`);
+
         if (!res?.url || typeof res.url !== 'string' || res.url === 'undefined') {
             throw new Error('Could not resolve a playable URL for this track.');
         }
@@ -400,6 +401,24 @@ class MusicService {
             state.queue.push(track); await this.updateController(guildId).catch(() => { });
         }
         return track;
+    }
+
+    async connectByIds({ guildId, voiceChannelId, textChannelId }) {
+        const state = this._getState(guildId);
+        state.textChannelId = textChannelId;
+        await this._ensureConnection(guildId, voiceChannelId);
+        await this.updateController(guildId).catch(() => { });
+        return state;
+    }
+
+    getQueue(guildId) {
+        const s = this._getState(guildId);
+        return {
+            nowPlaying: s.nowPlaying,
+            queue: s.queue,
+            looping: s.looping,
+            paused: s.player.state.status === AudioPlayerStatus.Paused,
+        };
     }
 
     togglePause(guildId) {
