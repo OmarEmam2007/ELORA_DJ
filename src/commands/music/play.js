@@ -55,7 +55,25 @@ module.exports = {
             }
         }
 
+        // 3) Fallback: if clones exist but none matched, allow using the main client if it has music
+        // (prevents false "No available music bot" when clones are not populated for this process)
+        if (!chosenBot && client?.music) {
+            chosenBot = client;
+        }
+
         if (!chosenBot || !chosenBot.music) {
+            try {
+                const dump = (client.clones || [client]).map(b => {
+                    const g = b.guilds.cache.get(guildId);
+                    return {
+                        bot: b.user?.username,
+                        inGuild: Boolean(g),
+                        voiceChannelId: g?.members?.me?.voice?.channelId || null,
+                        hasMusic: Boolean(b.music),
+                    };
+                });
+                console.log('[DJ_DEBUG] No available music bot. Bots dump:', { guildId, requestedVoiceChannelId: voiceChannel.id, dump });
+            } catch (_) { }
             const err = new EmbedBuilder().setColor(THEME.COLORS.ERROR).setDescription('❌ No available music bot right now.');
             const badAsset = buildAssetAttachment('wrong');
             if (badAsset?.url) err.setImage(badAsset.url);

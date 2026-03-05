@@ -15,6 +15,7 @@ const play = require('play-dl');
 
 let playDlInitPromise = null;
 let youtubeEnabled = true;
+let spotifyEnabled = false;
 
 function isRailway() {
     return Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_SERVICE_ID);
@@ -27,6 +28,26 @@ function isYouTubeDisabledByEnv() {
 
 async function initializePlayDL() {
     try {
+        // Spotify credentials enable Spotify URL resolution (Spotify -> search -> playable source).
+        const spotifyClientId = String(process.env.SPOTIFY_CLIENT_ID || '').trim();
+        const spotifyClientSecret = String(process.env.SPOTIFY_CLIENT_SECRET || '').trim();
+        spotifyEnabled = Boolean(spotifyClientId && spotifyClientSecret);
+
+        if (spotifyEnabled) {
+            try {
+                await play.setToken({
+                    spotify: {
+                        client_id: spotifyClientId,
+                        client_secret: spotifyClientSecret,
+                    },
+                });
+            } catch (e) {
+                spotifyEnabled = false;
+            }
+        }
+
+        console.log(`[DJ_DEBUG] Spotify Extraction: ${spotifyEnabled ? 'Enabled' : 'Disabled'}`);
+
         // Railway IPs are commonly blocked by YouTube (bot-check). If disabled, never attempt YouTube.
         if (isRailway() || isYouTubeDisabledByEnv()) {
             await play.setToken({
@@ -110,6 +131,27 @@ class MusicService {
         const state = this._getState(guildId);
         if (state.connection && state.voiceChannelId === voiceChannelId) return state.connection;
 
+        // If the bot is already connected due to 24/7 logic, attach to the existing connection.
+        const existing = getVoiceConnection(guildId, this.group);
+        if (existing) {
+            state.connection = existing;
+            state.voiceChannelId = voiceChannelId;
+            try {
+                existing.subscribe(state.player);
+            } catch (_) {
+                // ignore
+            }
+            return existing;
+        }
+
+        if (!guild) {
+            console.log('[DJ_DEBUG] _ensureConnection: guild not found. VoiceConnections dump:', {
+                guildId,
+                group: this.group,
+                hasExistingConnection: Boolean(existing),
+            });
+        }
+
         const connection = joinVoiceChannel({
             channelId: voiceChannelId, guildId: guild.id,
             adapterCreator: guild.voiceAdapterCreator, selfDeaf: true, group: this.group,
@@ -139,10 +181,15 @@ class MusicService {
                 if (u) {
                     const h = (u.hostname || '').toLowerCase();
                     const isYT = h.includes('youtube.com') || h === 'youtu.be';
+                    const isSpotify = h.includes('spotify.com') || h === 'open.spotify.com';
 
                     // If it's a direct YouTube URL and YouTube is disabled (Railway bot-check),
                     // don't return it as-is. Force fallback to SoundCloud search.
                     if (!(isYT && !youtubeEnabled)) {
+                        // If it's a Spotify URL but Spotify credentials are missing, fail early with a clear error.
+                        if (isSpotify && !spotifyEnabled) {
+                            throw new Error('Spotify link provided but SPOTIFY_CLIENT_ID/SECRET are missing or invalid.');
+                        }
                         return {
                             url: trimmed,
                             title: trimmed,
