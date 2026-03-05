@@ -11,6 +11,7 @@ const {
     entersState,
     demuxProbe,
 } = require('@discordjs/voice');
+
 const play = require('play-dl');
 
 let playDlInitPromise = null;
@@ -141,26 +142,68 @@ class MusicService {
             } catch (_) {
                 // ignore
             }
+            try {
+                await entersState(existing, VoiceConnectionStatus.Ready, 15_000).catch(() => { });
+            } catch (_) {
+                // ignore
+            }
             return existing;
         }
 
-        if (!guild) {
-            console.log('[DJ_DEBUG] _ensureConnection: guild not found. VoiceConnections dump:', {
-                guildId,
+        if (!guild) throw new Error('Guild not found for voice connection.');
+
+        console.log('[DJ_DEBUG] _ensureConnection: joining voice', {
+            guildId,
+            voiceChannelId,
+            group: this.group,
+            botUser: this.client.user?.tag,
+        });
+
+        let connection;
+        try {
+            connection = joinVoiceChannel({
+                channelId: voiceChannelId,
+                guildId: guild.id,
+                adapterCreator: guild.voiceAdapterCreator,
+                selfDeaf: true,
                 group: this.group,
-                hasExistingConnection: Boolean(existing),
             });
+        } catch (e) {
+            console.error('[DJ_DEBUG] joinVoiceChannel failed:', e);
+            throw e;
         }
 
-        const connection = joinVoiceChannel({
-            channelId: voiceChannelId, guildId: guild.id,
-            adapterCreator: guild.voiceAdapterCreator, selfDeaf: true, group: this.group,
-        });
+        try {
+            connection.on('stateChange', (oldState, newState) => {
+                console.log('[DJ_DEBUG] VoiceConnection stateChange:', {
+                    guildId,
+                    voiceChannelId,
+                    group: this.group,
+                    from: oldState?.status,
+                    to: newState?.status,
+                    reason: newState?.reason,
+                });
+            });
+        } catch (_) {
+            // ignore
+        }
 
         state.connection = connection; state.voiceChannelId = voiceChannelId;
-        await entersState(connection, VoiceConnectionStatus.Ready, 30_000).catch(e => {
-            connection.destroy(); state.connection = null; throw e;
-        });
+        try {
+            await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+        } catch (e) {
+            console.error('[DJ_DEBUG] entersState(Ready) failed:', {
+                guildId,
+                voiceChannelId,
+                group: this.group,
+                errorName: e?.name,
+                errorMessage: e?.message,
+                errorStack: e?.stack,
+            });
+            try { connection.destroy(); } catch (_) { }
+            state.connection = null;
+            throw new Error(e?.message || 'Failed to connect to voice channel (Ready state).');
+        }
         connection.subscribe(state.player);
         return connection;
     }
