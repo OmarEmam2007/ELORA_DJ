@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const { Client, GatewayIntentBits, Partials, ActivityType, Collection } = require('discord.js');
 const { loadCommands } = require('./handlers/commandHandler');
 const { loadEvents } = require('./handlers/eventHandler');
+const MusicService = require('./services/musicService');
 
 const client = new Client({
     intents: [
@@ -13,6 +14,8 @@ const client = new Client({
     ],
     partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
+
+client.music = new MusicService(client);
 
 client.commands = new Collection();
 client.config = require('../config.json');
