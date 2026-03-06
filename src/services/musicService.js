@@ -152,6 +152,23 @@ class MusicService {
 
         if (!guild) throw new Error('Guild not found for voice connection.');
 
+        try {
+            const vc = await guild.channels.fetch(voiceChannelId).catch(() => null);
+            const me = guild.members.me;
+            if (vc && me) {
+                const perms = vc.permissionsFor(me);
+                console.log('[DJ_DEBUG] Voice perms:', {
+                    guildId,
+                    voiceChannelId,
+                    canConnect: Boolean(perms?.has('Connect')),
+                    canSpeak: Boolean(perms?.has('Speak')),
+                    canView: Boolean(perms?.has('ViewChannel')),
+                });
+            }
+        } catch (_) {
+            // ignore
+        }
+
         console.log('[DJ_DEBUG] _ensureConnection: joining voice', {
             guildId,
             voiceChannelId,
@@ -184,15 +201,31 @@ class MusicService {
                     reason: newState?.reason,
                 });
             });
+
+            connection.on('error', (err) => {
+                console.error('[DJ_DEBUG] VoiceConnection error:', {
+                    guildId,
+                    voiceChannelId,
+                    group: this.group,
+                    errorName: err?.name,
+                    errorMessage: err?.message,
+                    errorStack: err?.stack,
+                });
+            });
         } catch (_) {
             // ignore
         }
 
         state.connection = connection; state.voiceChannelId = voiceChannelId;
-        try {
+        const waitReady = async () => {
             await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+            console.log('[DJ_DEBUG] VoiceConnection Ready:', { guildId, voiceChannelId, group: this.group });
+        };
+
+        try {
+            await waitReady();
         } catch (e) {
-            console.error('[DJ_DEBUG] entersState(Ready) failed:', {
+            console.error('[DJ_DEBUG] entersState(Ready) failed (attempt 1):', {
                 guildId,
                 voiceChannelId,
                 group: this.group,
@@ -200,47 +233,33 @@ class MusicService {
                 errorMessage: e?.message,
                 errorStack: e?.stack,
             });
+
             try { connection.destroy(); } catch (_) { }
             state.connection = null;
-            throw new Error(e?.message || 'Failed to connect to voice channel (Ready state).');
-        }
-        connection.subscribe(state.player);
-        return connection;
-    }
 
-    // --- مصدر وحيد: SoundCloud أولاً لتفادي مشاكل يوتيوب / DNS ---
-    async _resolveQuery(query) {
-        // If it's already a valid URL, don't search.
-        if (query && typeof query === 'string') {
-            const trimmed = query.trim();
-            if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-                let u;
-                try {
-                    u = new URL(trimmed);
-                } catch (_) {
-                    u = null;
-                }
-
-                if (u) {
-                    const h = (u.hostname || '').toLowerCase();
-                    const isYT = h.includes('youtube.com') || h === 'youtu.be';
-                    const isSpotify = h.includes('spotify.com') || h === 'open.spotify.com';
-
-                    // If it's a direct YouTube URL and YouTube is disabled (Railway bot-check),
-                    // don't return it as-is. Force fallback to SoundCloud search.
-                    if (!(isYT && !youtubeEnabled)) {
-                        // If it's a Spotify URL but Spotify credentials are missing, fail early with a clear error.
-                        if (isSpotify && !spotifyEnabled) {
-                            throw new Error('Spotify link provided but SPOTIFY_CLIENT_ID/SECRET are missing or invalid.');
-                        }
-                        return {
-                            url: trimmed,
-                            title: trimmed,
-                            thumbnail: null,
-                            duration: null
-                        };
-                    }
-                }
+            // Retry once (transient signalling/connecting loops can happen on hosted envs)
+            try {
+                connection = joinVoiceChannel({
+                    channelId: voiceChannelId,
+                    guildId: guild.id,
+                    adapterCreator: guild.voiceAdapterCreator,
+                    selfDeaf: true,
+                    group: this.group,
+                });
+                state.connection = connection;
+                await waitReady();
+            } catch (e2) {
+                console.error('[DJ_DEBUG] entersState(Ready) failed (attempt 2):', {
+                    guildId,
+                    voiceChannelId,
+                    group: this.group,
+                    errorName: e2?.name,
+                    errorMessage: e2?.message,
+                    errorStack: e2?.stack,
+                });
+                try { connection?.destroy(); } catch (_) { }
+                state.connection = null;
+                throw new Error(e2?.message || 'Failed to connect to voice channel (Ready state).');
             }
         }
 
